@@ -4,18 +4,15 @@ use halo2_ecc::fields::fp::FpChip;
 use halo2_ecc::fields::{FieldChip, PrimeField};
 use halo2_base::halo2_proofs::{
     dev::MockProver,
-    halo2curves::bls12_381::{Scalar},
+    halo2curves::bls12_381::Scalar,
     halo2curves::bn256::Fr
 };
 
 use halo2_base::gates::builder::{GateThreadBuilder, RangeCircuitBuilder};
 use halo2_base::gates::RangeChip;
-use halo2_base::utils::biguint_to_fe;
-use halo2_base::utils::{fe_to_biguint, modulus};
 use halo2_base::Context;
-use rand::rngs::OsRng;
 
-const K: usize = 12;
+const K: usize = 10;
 
 fn fp_chip_test(
     k: usize,
@@ -41,8 +38,6 @@ fn main() {
     let limb_bits = 88;
     let num_limbs = 3;
     fp_chip_test(K, K - 1, limb_bits, num_limbs, |ctx, chip| {
-        // let _a = Fq::random(OsRng);
-        // let _b = Fq::random(OsRng);
         let _a = Scalar::from(2);
         let _b = Scalar::from(7);
 
