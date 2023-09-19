@@ -1,12 +1,10 @@
 use std::env::set_var;
-use std::env::var;
 
-use ff::{Field, PrimeField};
-use halo2_base::gates::range;
+use ff::{Field};
 use halo2_base::halo2_proofs::{
     dev::MockProver,
     halo2curves::bls12_381::Scalar,
-    halo2curves::bn256::{Fq, Fr},
+    halo2curves::bn256::Fr,
 };
 use halo2_base::safe_types::GateInstructions;
 use halo2_base::utils::ScalarField;
@@ -20,7 +18,6 @@ use halo2_base::gates::builder::{GateThreadBuilder, RangeWithInstanceCircuitBuil
 use halo2_base::gates::{GateChip, RangeChip, RangeInstructions};
 use halo2_base::Context;
 use poseidon::PoseidonChip;
-use serde::{Deserialize, Serialize};
 
 use rand::rngs::OsRng;
 
@@ -43,6 +40,7 @@ const FP_MODULUS_BITS: usize = 255;
 const FR_MODULUS_BITS: usize = 254;
 
 fn main() {
+    // create a random input
     let input = CircuitInput {
         batch_commit: Fr::random(OsRng),
         blob: (0..BLOB_WIDTH)
@@ -52,16 +50,17 @@ fn main() {
             .unwrap(),
     };
 
+    // set the `LOOKUP_BITS` for halo2-lib
     set_var("LOOKUP_BITS", LOOKUP_BITS.to_string());
 
     let mut builder = GateThreadBuilder::<Fr>::mock();
     let ctx = builder.main(0);
     let mut make_public: Vec<AssignedValue<Fr>> = vec![];
+    
     blob_consistency_check::<Fr, Scalar>(ctx, input, &mut make_public);
 
     builder.config(K, Some(20));
     let circuit = RangeWithInstanceCircuitBuilder::mock(builder, make_public.clone());
-
     let public: Vec<Fr> = make_public.iter().map(|x| *x.value()).collect();
     MockProver::run(K as u32, &circuit, vec![public])
         .unwrap()
@@ -73,6 +72,7 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     input: CircuitInput<F, Fp>,
     make_public: &mut Vec<AssignedValue<F>>,
 ) {
+    
     let zero = ctx.load_zero();
     let range = RangeChip::<F>::default(LOOKUP_BITS);
     let gate = &range.gate;
@@ -80,8 +80,9 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     let fp_chip = FpChip::<F, Fp>::new(&range, LIMB_BITS, NUM_LIMBS);
     let one_fp = fp_chip.load_constant(ctx, Fp::ONE);
 
-    // === STEP 1 ===
-    // load batch_commit and blob then compute the challenge point
+    // ==== STEP 1: calculate the challenge point ====
+    //
+    // challenge_point = poseidon(batch_commit, blob[0..BLOB_WIDTH])
 
     let batch_commit = input.batch_commit;
     let batch_commit = ctx.load_witness(batch_commit);
@@ -101,24 +102,38 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
 
     let challenge_point = poseidon.squeeze(ctx, gate).unwrap();
 
-    // === STEP 2 ===
-    // load challenge_point and blob in fp_chip and compute the evaluation
+    // === STEP 2: compute the barycentric formula ===
+    // spec reference: 
+    // https://github.com/ethereum/consensus-specs/blob/dev/specs/deneb/polynomial-commitments.md
+    //
+    // barycentric formula:
+    // Evaluate a polynomial (in evaluation form) at an arbitrary point ``z``.
+    // - When ``z`` is in the domain, the evaluation can be found by indexing 
+    // the polynomial at the position that ``z`` is in the domain.
+    // - When ``z`` is not in the domain, the barycentric formula is used:
+    //    f(z) = (z**WIDTH - 1) / WIDTH  *  sum_(i=0)^WIDTH  (f(DOMAIN[i]) * DOMAIN[i]) / (z - DOMAIN[i])
+    // 
+    // In our case:
+    // - ``z`` is the challenge point in Fp
+    // - ``WIDTH`` is BLOB_WIDTH
+    // - ``DOMAIN`` is the bit_reversal_permutation roots of unity
+    // - ``f(DOMAIN[i])`` is the blob[i]
 
-    // load challenge_point and blob to fq
+    // load challenge_point and blob to fp_chip
     let (cp_lo, cp_hi) = decompose_to_lo_hi(ctx, &range, challenge_point);
-
     let challenge_point_fp = cross_field_load_private(ctx, &fp_chip, &range, &cp_lo, &cp_hi);
 
+    // loading roots of unity to fp_chip
     let blob_width_th_root_of_unity = Fp::ROOT_OF_UNITY.pow(&[(Fp::S  - BLOB_WIDTH_BITS) as u64, 0, 0, 0]);
     let roots_of_unity: Vec<_> = (0..BLOB_WIDTH)
         .map(|i| blob_width_th_root_of_unity.pow(&[i as u64, 0, 0, 0]))
         .collect();
-
     let roots_of_unity = roots_of_unity
         .iter()
         .map(|x| fp_chip.load_constant(ctx, *x))
         .collect::<Vec<_>>();
 
+    // apply bit_reversal_permutation to roots_of_unity
     let roots_of_unity_brp = bit_reversal_permutation(roots_of_unity);
 
     let mut result = fp_chip.load_constant(ctx, Fp::ZERO);
@@ -132,8 +147,8 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
         let denominator_i = fp_chip.carry_mod(ctx, denominator_i_no_carry);
 
         // avoid division by zero
-        // safe_denominator_i = denominator_i   (denominator_i != 0)
-        // safe_denominator_i = 1               (denominator_i == 0)
+        // safe_denominator_i = denominator_i       (denominator_i != 0)
+        // safe_denominator_i = 1                   (denominator_i == 0)
         let is_zero_denominator_i = fp_is_zero(ctx, gate, &denominator_i);
         let is_zero_denominator_i = cross_field_load_private(ctx, &fp_chip, &range, &is_zero_denominator_i, &zero);
         let safe_denominator_i =
