@@ -134,7 +134,7 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
         // avoid division by zero
         // safe_denominator_i = denominator_i   (denominator_i != 0)
         // safe_denominator_i = 1               (denominator_i == 0)
-        let is_zero_denominator_i = fq_is_zero(ctx, gate, &denominator_i);
+        let is_zero_denominator_i = fp_is_zero(ctx, gate, &denominator_i);
         let is_zero_denominator_i = cross_field_load_private(ctx, &fp_chip, &range, &is_zero_denominator_i, &zero);
         let safe_denominator_i =
             fp_chip.add_no_carry(ctx, denominator_i, is_zero_denominator_i.clone());
@@ -250,7 +250,7 @@ fn cross_field_constrain_equal<F: ScalarField>(
     ctx.constrain_equal(&sum, &x_hi);
 }
 
-fn fq_is_zero<F: ScalarField>(
+fn fp_is_zero<F: ScalarField>(
     ctx: &mut Context<F>,
     gate: &GateChip<F>,
     x_fp: &ProperCrtUint<F>,
