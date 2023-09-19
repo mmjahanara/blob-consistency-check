@@ -2,6 +2,7 @@ use std::env::set_var;
 use std::env::var;
 
 use ff::{Field, PrimeField};
+use halo2_base::gates::range;
 use halo2_base::halo2_proofs::{
     dev::MockProver,
     halo2curves::bls12_381::Scalar,
@@ -16,34 +17,39 @@ use halo2_ecc::fields::fp::FpChip;
 use halo2_ecc::fields::FieldChip;
 
 use halo2_base::gates::builder::{GateThreadBuilder, RangeWithInstanceCircuitBuilder};
-use halo2_base::gates::{GateChip, RangeChip};
+use halo2_base::gates::{GateChip, RangeChip, RangeInstructions};
 use halo2_base::Context;
-
 use poseidon::PoseidonChip;
 use serde::{Deserialize, Serialize};
+
+use rand::rngs::OsRng;
 
 const T: usize = 3;
 const RATE: usize = 2;
 const R_F: usize = 8;
 const R_P: usize = 57;
-const BLOB_WIDTH: usize = 4;
+const BLOB_WIDTH: usize = 64;
+const BLOB_WIDTH_BITS: u32 = 6;
 
-const K: usize = 10;
+const K: usize = 11;
 
+// assumption: LIMB_BITS >= 85
 const LIMB_BITS: usize = 88;
 const NUM_LIMBS: usize = 3;
 
-const LOOKUP_BITS: usize = 9;
+const LOOKUP_BITS: usize = 10;
+
+const FP_MODULUS_BITS: usize = 255;
+const FR_MODULUS_BITS: usize = 254;
 
 fn main() {
     let input = CircuitInput {
-        batch_commit: "77".to_string(),
-        blob: [
-            "1".to_string(),
-            "2".to_string(),
-            "3".to_string(),
-            "4".to_string(),
-        ],
+        batch_commit: Fr::random(OsRng),
+        blob: (0..BLOB_WIDTH)
+            .map(|_| Scalar::random(OsRng))
+            .collect::<Vec<Scalar>>()
+            .try_into()
+            .unwrap(),
     };
 
     set_var("LOOKUP_BITS", LOOKUP_BITS.to_string());
@@ -51,9 +57,9 @@ fn main() {
     let mut builder = GateThreadBuilder::<Fr>::mock();
     let ctx = builder.main(0);
     let mut make_public: Vec<AssignedValue<Fr>> = vec![];
-    blob_consistency_check::<Fr>(ctx, input, &mut make_public);
+    blob_consistency_check::<Fr, Scalar>(ctx, input, &mut make_public);
 
-    builder.config(K, Some(10));
+    builder.config(K, Some(20));
     let circuit = RangeWithInstanceCircuitBuilder::mock(builder, make_public.clone());
 
     let public: Vec<Fr> = make_public.iter().map(|x| *x.value()).collect();
@@ -62,62 +68,48 @@ fn main() {
         .assert_satisfied();
 }
 
-fn blob_consistency_check<F: ScalarField>(
+fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     ctx: &mut Context<F>,
-    input: CircuitInput,
+    input: CircuitInput<F, Fp>,
     make_public: &mut Vec<AssignedValue<F>>,
 ) {
-    // === STEP 1 ===
-    // load batch_commit and blob then compute the challenge point
-
-    let batch_commit =
-        F::from_str_vartime(&input.batch_commit).expect("failed to deserialize batch_commit");
-    let batch_commit = ctx.load_witness(batch_commit);
-    make_public.push(batch_commit);
-
-    let blob: Vec<_> = input
-        .blob
-        .iter()
-        .map(|x| F::from_str_vartime(x).expect("failed to deserialize blob"))
-        .collect();
-    let blob = blob
-        .iter()
-        .map(|x| ctx.load_witness(*x))
-        .collect::<Vec<_>>();
-
+    let zero = ctx.load_zero();
     let range = RangeChip::<F>::default(LOOKUP_BITS);
     let gate = &range.gate;
 
+    let fp_chip = FpChip::<F, Fp>::new(&range, LIMB_BITS, NUM_LIMBS);
+    let one_fp = fp_chip.load_constant(ctx, Fp::ONE);
+
+    // === STEP 1 ===
+    // load batch_commit and blob then compute the challenge point
+
+    let batch_commit = input.batch_commit;
+    let batch_commit = ctx.load_witness(batch_commit);
+    make_public.push(batch_commit);
+
+    let blob = input
+        .blob
+        .iter()
+        .map(|x| fp_chip.load_private(ctx, *x))
+        .collect::<Vec<_>>();
+
     let mut poseidon = PoseidonChip::<F, T, RATE>::new(ctx, R_F, R_P).unwrap();
     poseidon.update(&[batch_commit]);
-    poseidon.update(blob.as_slice());
+    for item in blob.clone() {
+        poseidon.update(item.limbs());
+    }
 
     let challenge_point = poseidon.squeeze(ctx, gate).unwrap();
 
     // === STEP 2 ===
     // load challenge_point and blob in fp_chip and compute the evaluation
 
-    let fp_chip = FpChip::<F, Scalar>::new(&range, LIMB_BITS, NUM_LIMBS);
-    let one_fp = fp_chip.load_constant(ctx, Scalar::one());
-
     // load challenge_point and blob to fq
-    let challenge_point_fp = cross_field_load_private(ctx, &fp_chip, &challenge_point);
+    let (cp_lo, cp_hi) = decompose_to_lo_hi(ctx, &range, challenge_point);
 
-    let blob_fp: Vec<_> = input
-        .blob
-        .iter()
-        .map(|x| Scalar::from_str_vartime(x).expect("failed to deserialize blob"))
-        .collect();
-    let blob_fp = blob_fp
-        .iter()
-        .map(|x| fp_chip.load_private(ctx, *x))
-        .collect::<Vec<_>>();
-    for i in 0..BLOB_WIDTH {
-        cross_field_constrain_equal(ctx, gate, &blob[i], &blob_fp[i]);
-    }
+    let challenge_point_fp = cross_field_load_private(ctx, &fp_chip, &range, &cp_lo, &cp_hi);
 
-    // TODO: set `blob_width_th_root_of_unity` correctly
-    let blob_width_th_root_of_unity = Scalar::from(2);
+    let blob_width_th_root_of_unity = Fp::ROOT_OF_UNITY.pow(&[(Fp::S  - BLOB_WIDTH_BITS) as u64, 0, 0, 0]);
     let roots_of_unity: Vec<_> = (0..BLOB_WIDTH)
         .map(|i| blob_width_th_root_of_unity.pow(&[i as u64, 0, 0, 0]))
         .collect();
@@ -129,11 +121,11 @@ fn blob_consistency_check<F: ScalarField>(
 
     // TODO: apply `bit_reversal_permutation` to `roots_of_unity`
 
-    let mut result = fp_chip.load_constant(ctx, Scalar::zero());
-    let mut cp_is_not_root_of_unity = fp_chip.load_constant(ctx, Scalar::one());
-    let mut barycentric_evaluation = fp_chip.load_constant(ctx, Scalar::zero());
+    let mut result = fp_chip.load_constant(ctx, Fp::ZERO);
+    let mut cp_is_not_root_of_unity = fp_chip.load_constant(ctx, Fp::ONE);
+    let mut barycentric_evaluation = fp_chip.load_constant(ctx, Fp::ZERO);
     for i in 0..BLOB_WIDTH as usize {
-        let numinator_i = fp_chip.mul(ctx, roots_of_unity[i].clone(), blob_fp[i].clone());
+        let numinator_i = fp_chip.mul(ctx, roots_of_unity[i].clone(), blob[i].clone());
 
         let denominator_i_no_carry =
             fp_chip.sub_no_carry(ctx, challenge_point_fp.clone(), roots_of_unity[i].clone());
@@ -143,7 +135,7 @@ fn blob_consistency_check<F: ScalarField>(
         // safe_denominator_i = denominator_i   (denominator_i != 0)
         // safe_denominator_i = 1               (denominator_i == 0)
         let is_zero_denominator_i = fq_is_zero(ctx, gate, &denominator_i);
-        let is_zero_denominator_i = cross_field_load_private(ctx, &fp_chip, &is_zero_denominator_i);
+        let is_zero_denominator_i = cross_field_load_private(ctx, &fp_chip, &range, &is_zero_denominator_i, &zero);
         let safe_denominator_i =
             fp_chip.add_no_carry(ctx, denominator_i, is_zero_denominator_i.clone());
         let safe_denominator_i = fp_chip.carry_mod(ctx, safe_denominator_i);
@@ -153,8 +145,8 @@ fn blob_consistency_check<F: ScalarField>(
             fp_chip.mul(ctx, cp_is_not_root_of_unity, is_zero_denominator_i.clone());
 
         // update `result`, select blob_fp[i] if denominator_i == 0
-        let select_blob_fp = fp_chip.mul(ctx, blob_fp[i].clone(), is_zero_denominator_i);
-        let tmp_result = fp_chip.add_no_carry(ctx, result, select_blob_fp);
+        let select_blob_i = fp_chip.mul(ctx, blob[i].clone(), is_zero_denominator_i);
+        let tmp_result = fp_chip.add_no_carry(ctx, result, select_blob_i);
         result = fp_chip.carry_mod(ctx, tmp_result);
 
         let term_i = fp_chip.divide(ctx, numinator_i, safe_denominator_i);
@@ -166,7 +158,7 @@ fn blob_consistency_check<F: ScalarField>(
     let cp_to_the_width = fp_pow(ctx, &fp_chip, &challenge_point_fp, BLOB_WIDTH as u32);
     let cp_to_the_width_minus_one = fp_chip.sub_no_carry(ctx, cp_to_the_width, one_fp);
     let cp_to_the_width_minus_one = fp_chip.carry_mod(ctx, cp_to_the_width_minus_one);
-    let width_fp = fp_chip.load_constant(ctx, Scalar::from(BLOB_WIDTH as u64));
+    let width_fp = fp_chip.load_constant(ctx, Fp::from(BLOB_WIDTH as u64));
     let factor = fp_chip.divide(ctx, cp_to_the_width_minus_one, width_fp);
     barycentric_evaluation = fp_chip.mul(ctx, barycentric_evaluation, factor);
 
@@ -176,41 +168,86 @@ fn blob_consistency_check<F: ScalarField>(
     make_public.extend(result.limbs());
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CircuitInput {
-    pub batch_commit: String,
-    pub blob: [String; BLOB_WIDTH],
+#[derive(Clone, Debug)]
+pub struct CircuitInput<F: ScalarField, Fp: ScalarField> {
+    pub batch_commit: F,
+    pub blob: [Fp; BLOB_WIDTH],
+}
+
+fn decompose_to_lo_hi<F: ScalarField>(
+    ctx: &mut Context<F>,
+    range: &RangeChip<F>,
+    x: AssignedValue<F>,
+) -> (AssignedValue<F>, AssignedValue<F>) {
+    let x_limbs = halo2_base::utils::decompose(x.value(), NUM_LIMBS, LIMB_BITS);
+
+    let x_lo =
+        ctx.load_witness(x_limbs[0] + x_limbs[1] * F::from(2).pow([LIMB_BITS as u64, 0, 0, 0]));
+    range.range_check(ctx, x_lo.clone(), LIMB_BITS * 2);
+
+    let x_hi = ctx.load_witness(x_limbs[2]);
+    range.range_check(ctx, x_hi.clone(), FR_MODULUS_BITS - LIMB_BITS * 2);
+
+    let mut sum = range.gate.mul(
+        ctx,
+        x_hi,
+        Constant(F::from(2).pow([LIMB_BITS as u64 * 2, 0, 0, 0])),
+    );
+    sum = range.gate.add(ctx, sum, x_lo);
+    ctx.constrain_equal(&sum, &x);
+
+    (x_lo, x_hi)
 }
 
 fn cross_field_load_private<F: ScalarField, Fp: ScalarField>(
     ctx: &mut Context<F>,
     fq_chip: &FpChip<F, Fp>,
-    x: &AssignedValue<F>,
+    range: &RangeChip<F>,
+    x_lo: &AssignedValue<F>,
+    x_hi: &AssignedValue<F>,
 ) -> ProperCrtUint<F> {
-    let x_fp = Fp::from_bytes_le(x.value().to_bytes_le().as_slice());
+    let x_fp = Fp::from_bytes_le(x_lo.value().to_bytes_le().as_slice())
+        + Fp::from_bytes_le(x_hi.value().to_bytes_le().as_slice())
+            * Fp::from(2).pow([(LIMB_BITS * 2) as u64, 0, 0, 0]);
+
+    range.range_check(ctx, x_lo.clone(), LIMB_BITS * 2);
+    range.range_check(ctx, x_hi.clone(), FP_MODULUS_BITS - LIMB_BITS * 2);
+
     let x_fp = fq_chip.load_private(ctx, x_fp);
-    cross_field_constrain_equal(ctx, &fq_chip.range().gate, x, &x_fp);
+    cross_field_constrain_equal(ctx, &fq_chip.range().gate, x_lo, x_hi, &x_fp);
     x_fp
 }
 
 fn cross_field_constrain_equal<F: ScalarField>(
     ctx: &mut Context<F>,
     gate: &GateChip<F>,
-    x: &AssignedValue<F>,
+    x_lo: &AssignedValue<F>,
+    x_hi: &AssignedValue<F>,
     x_fp: &ProperCrtUint<F>,
 ) {
-    //TODO: add overflow protection constraints
-    //Bound the last limb of x_fp to be less than 2^LIMB_BITS-10)?
-
     let x_fp_limbs = x_fp.limbs();
+
+    // check x_lo
     let mut sum = ctx.load_zero();
     let mut mul = ctx.load_constant(F::from(1));
     let limb_multiplier = ctx.load_constant(F::from_u128(2u128.pow(LIMB_BITS as u32)));
-    for limb in x_fp_limbs {
+    for i in 0..2 {
+        let limb = x_fp_limbs[i];
         sum = gate.mul_add(ctx, limb.clone(), mul, sum);
         mul = gate.mul(ctx, limb_multiplier, mul);
     }
-    ctx.constrain_equal(&sum, &x);
+    ctx.constrain_equal(&sum, &x_lo);
+
+    //check x_hi
+    let mut sum = ctx.load_zero();
+    let mut mul = ctx.load_constant(F::from(1));
+    let limb_multiplier = ctx.load_constant(F::from_u128(2u128.pow(LIMB_BITS as u32)));
+    for i in 2..NUM_LIMBS {
+        let limb = x_fp_limbs[i];
+        sum = gate.mul_add(ctx, limb.clone(), mul, sum);
+        mul = gate.mul(ctx, limb_multiplier, mul);
+    }
+    ctx.constrain_equal(&sum, &x_hi);
 }
 
 fn fq_is_zero<F: ScalarField>(
