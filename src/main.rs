@@ -119,16 +119,16 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
         .map(|x| fp_chip.load_constant(ctx, *x))
         .collect::<Vec<_>>();
 
-    // TODO: apply `bit_reversal_permutation` to `roots_of_unity`
+    let roots_of_unity_brp = bit_reversal_permutation(roots_of_unity);
 
     let mut result = fp_chip.load_constant(ctx, Fp::ZERO);
     let mut cp_is_not_root_of_unity = fp_chip.load_constant(ctx, Fp::ONE);
     let mut barycentric_evaluation = fp_chip.load_constant(ctx, Fp::ZERO);
     for i in 0..BLOB_WIDTH as usize {
-        let numinator_i = fp_chip.mul(ctx, roots_of_unity[i].clone(), blob[i].clone());
+        let numinator_i = fp_chip.mul(ctx, roots_of_unity_brp[i].clone(), blob[i].clone());
 
         let denominator_i_no_carry =
-            fp_chip.sub_no_carry(ctx, challenge_point_fp.clone(), roots_of_unity[i].clone());
+            fp_chip.sub_no_carry(ctx, challenge_point_fp.clone(), roots_of_unity_brp[i].clone());
         let denominator_i = fp_chip.carry_mod(ctx, denominator_i_no_carry);
 
         // avoid division by zero
@@ -285,12 +285,12 @@ fn fp_pow<F: ScalarField, Fp: ScalarField>(
     result
 }
 
-fn bit_reversal_permutation<T: Clone + Copy>(seq: Vec<T>) -> Vec<T> {
+fn bit_reversal_permutation<T: Clone>(seq: Vec<T>) -> Vec<T> {
     // return a permutation of seq, where the indices are bit-reversed
     // e.g. bit_reversal_permutation([0, 1, 2, 3]) = [0, 2, 1, 3]
     let n = seq.len();
     let log_n = (n as f64).log2() as usize;
-    let mut result: Vec<T> = vec![seq[0]; n];
+    let mut result: Vec<T> = vec![seq[0].clone(); n];
     for i in 0..n {
         let mut j = i;
         let mut k = 0;
@@ -298,7 +298,7 @@ fn bit_reversal_permutation<T: Clone + Copy>(seq: Vec<T>) -> Vec<T> {
             k = (k << 1) | (j & 1);
             j >>= 1;
         }
-        result[i] = seq[k];
+        result[i] = seq[k].clone();
     }
     result
 }
