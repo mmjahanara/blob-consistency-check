@@ -303,6 +303,8 @@ fn bit_reversal_permutation<T: Clone>(seq: Vec<T>) -> Vec<T> {
     result
 }
 
+// TODO: add more tests!
+
 #[test]
 fn test_bit_reversal() {
     let seq = vec![0, 1, 2, 3];
