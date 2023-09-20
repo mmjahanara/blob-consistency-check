@@ -157,12 +157,13 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
             fp_chip.add_no_carry(ctx, denominator_i, is_zero_denominator_i.clone());
         let safe_denominator_i = fp_chip.carry_mod(ctx, safe_denominator_i);
 
+        let non_zero_denominator_i = fp_chip.sub_no_carry(ctx, one_fp.clone(), is_zero_denominator_i.clone());
         // update `cp_is_not_root_of_unity`
         cp_is_not_root_of_unity =
-            fp_chip.mul(ctx, cp_is_not_root_of_unity, is_zero_denominator_i.clone());
+            fp_chip.mul(ctx, cp_is_not_root_of_unity, non_zero_denominator_i);
 
         // update `result`, select blob_fp[i] if denominator_i == 0
-        let select_blob_i = fp_chip.mul(ctx, blob[i].clone(), is_zero_denominator_i);
+        let select_blob_i = fp_chip.mul(ctx, blob[i].clone(), is_zero_denominator_i.clone());
         let tmp_result = fp_chip.add_no_carry(ctx, result, select_blob_i);
         result = fp_chip.carry_mod(ctx, tmp_result);
 
@@ -182,7 +183,6 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     let select_evaluation = fp_chip.mul(ctx, barycentric_evaluation, cp_is_not_root_of_unity);
     let tmp_result = fp_chip.add_no_carry(ctx, result, select_evaluation);
     result = fp_chip.carry_mod(ctx, tmp_result);
-    print!("{:?}", result.limbs());
     make_public.extend(result.limbs());
 }
 
@@ -411,10 +411,6 @@ fn test_blob_consistency_check() {
 
     builder.config(K, Some(20));
     let circuit = RangeWithInstanceCircuitBuilder::mock(builder, make_public.clone());
-
-    // TODO: the test fails as the circuit exposes result = 0 as public input
-    //       probably used an indicator in the opposite direction (0 instead of 1 or vice versa)
-    //       have to investigate the circuit further
 
     MockProver::run(K as u32, &circuit, vec![public_input])
         .unwrap()
