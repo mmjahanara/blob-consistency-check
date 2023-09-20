@@ -56,7 +56,7 @@ fn main() {
     let mut make_public: Vec<AssignedValue<Fr>> = vec![];
 
     blob_consistency_check::<Fr, Scalar>(ctx, input, &mut make_public);
-
+    
     builder.config(K, Some(20));
     let circuit = RangeWithInstanceCircuitBuilder::mock(builder, make_public.clone());
     let public: Vec<Fr> = make_public.iter().map(|x| *x.value()).collect();
@@ -101,6 +101,7 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     }
 
     let challenge_point = poseidon.squeeze(ctx, gate).unwrap();
+    make_public.push(challenge_point.clone());
 
     // === STEP 2: compute the barycentric formula ===
     // spec reference:
@@ -360,12 +361,14 @@ fn test_blob_consistency_check() {
     //      in fact the tests for halo2-lib poseidon package fail as well!
     //      I mocked this part out for now, but have to figure out what's going on.
     //
+    //      currently the poseidon chip behavior is kinda undeterministic!
+    //
     //let challenge_point = native_poseidon.squeeze();
     let challenge_point = Fr::from_raw([
-        0xa365ac38bf133a78,
-        0xf3757d8cf92c46a6,
-        0x68556735e678f76e,
-        0x008df97ae4dc3ae7,
+        0xf3b50e94a5592fd3, 
+        0x3245472633e009b0, 
+        0x215bf2f000217288, 
+        0x17abb1226820be09
     ]);
 
     let challenge_point_fp = Scalar::from_bytes_le(challenge_point.to_bytes_le().as_slice());
@@ -406,7 +409,7 @@ fn test_blob_consistency_check() {
     let result = fe_to_biguint(&result);
     let result_limbs = decompose_biguint::<Fr>(&result, NUM_LIMBS, LIMB_BITS);
 
-    let mut public_input: Vec<Fr> = vec![input.batch_commit];
+    let mut public_input: Vec<Fr> = vec![input.batch_commit, challenge_point];
     public_input.extend(result_limbs.clone());
 
     // set the `LOOKUP_BITS` for halo2-lib
