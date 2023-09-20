@@ -16,7 +16,8 @@ halo2-ecc = {default-features = false, features = [
     "display",
 ], git = "https://github.com/mmjahanara/halo2-lib.git"}
 
-poseidon = {git = "https://github.com/mmjahanara/halo2-lib.git"}
+poseidon = {git = "https://github.com/mmjahanara/halo2-lib.git", package="poseidon"}
+poseidon_hash = { git = "https://github.com/mmjahanara/poseidon.git", package="poseidon"}
 
 
 rand = "0.8"
