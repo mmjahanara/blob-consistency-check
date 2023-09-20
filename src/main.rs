@@ -23,8 +23,8 @@ const T: usize = 3;
 const RATE: usize = 2;
 const R_F: usize = 8;
 const R_P: usize = 57;
-const BLOB_WIDTH: usize = 4;
-const BLOB_WIDTH_BITS: u32 = 2;
+const BLOB_WIDTH: usize = 4096;
+const BLOB_WIDTH_BITS: u32 = 12;
 
 const K: usize = 14;
 
