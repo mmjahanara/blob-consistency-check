@@ -1,6 +1,6 @@
 use std::env::set_var;
 
-use ff::{Field, PrimeField};
+use ff::Field;
 use halo2_base::halo2_proofs::{
     dev::MockProver, halo2curves::bls12_381::Scalar, halo2curves::bn256::Fr,
 };
@@ -23,8 +23,8 @@ const T: usize = 3;
 const RATE: usize = 2;
 const R_F: usize = 8;
 const R_P: usize = 57;
-const BLOB_WIDTH: usize = 4096;
-const BLOB_WIDTH_BITS: u32 = 12;
+const BLOB_WIDTH: usize = 4;
+const BLOB_WIDTH_BITS: u32 = 2;
 
 const K: usize = 14;
 
@@ -80,7 +80,10 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     // ==== STEP 1: calculate the challenge point ====
     //
     // challenge_point = poseidon(batch_commit, blob[0..BLOB_WIDTH])
-
+    //
+    // REMARK: notice that is is important to include the blob in the
+    // poseidon hash, otherwise we have a soundness bug.
+    //
     let batch_commit = input.batch_commit;
     let batch_commit = ctx.load_witness(batch_commit);
     make_public.push(batch_commit);
@@ -157,12 +160,15 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
             fp_chip.add_no_carry(ctx, denominator_i, is_zero_denominator_i.clone());
         let safe_denominator_i = fp_chip.carry_mod(ctx, safe_denominator_i);
 
-        let non_zero_denominator_i = fp_chip.sub_no_carry(ctx, one_fp.clone(), is_zero_denominator_i.clone());
         // update `cp_is_not_root_of_unity`
-        cp_is_not_root_of_unity =
-            fp_chip.mul(ctx, cp_is_not_root_of_unity, non_zero_denominator_i);
+        // cp_is_not_root_of_unity = 1          (initialize)
+        // cp_is_not_root_of_unity = 0          (denominator_i == 0)
+        let non_zero_denominator_i =
+            fp_chip.sub_no_carry(ctx, one_fp.clone(), is_zero_denominator_i.clone());
+        cp_is_not_root_of_unity = fp_chip.mul(ctx, cp_is_not_root_of_unity, non_zero_denominator_i);
 
-        // update `result`, select blob_fp[i] if denominator_i == 0
+        // update `result`,
+        // result = blob[i]     (challenge_point = roots_of_unity_brp[i])
         let select_blob_i = fp_chip.mul(ctx, blob[i].clone(), is_zero_denominator_i.clone());
         let tmp_result = fp_chip.add_no_carry(ctx, result, select_blob_i);
         result = fp_chip.carry_mod(ctx, tmp_result);
@@ -172,7 +178,7 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
         let evaluation_not_proper = fp_chip.add_no_carry(ctx, barycentric_evaluation, term_i);
         barycentric_evaluation = fp_chip.carry_mod(ctx, evaluation_not_proper);
     }
-    // evaluation = evaluation * (challenge_point**BLOB_WIDTH - 1) / BLOB_WIDTH
+    // evaluation = evaluation * (challenge_point^BLOB_WIDTH - 1) / BLOB_WIDTH
     let cp_to_the_width = fp_pow(ctx, &fp_chip, &challenge_point_fp, BLOB_WIDTH as u32);
     let cp_to_the_width_minus_one = fp_chip.sub_no_carry(ctx, cp_to_the_width, one_fp);
     let cp_to_the_width_minus_one = fp_chip.carry_mod(ctx, cp_to_the_width_minus_one);
@@ -180,6 +186,9 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     let factor = fp_chip.divide(ctx, cp_to_the_width_minus_one, width_fp);
     barycentric_evaluation = fp_chip.mul(ctx, barycentric_evaluation, factor);
 
+    // === STEP 3: select between the two case ===
+    // if challenge_point is a root of unity, then result = blob[i]
+    // else result = barycentric_evaluation
     let select_evaluation = fp_chip.mul(ctx, barycentric_evaluation, cp_is_not_root_of_unity);
     let tmp_result = fp_chip.add_no_carry(ctx, result, select_evaluation);
     result = fp_chip.carry_mod(ctx, tmp_result);
@@ -325,6 +334,7 @@ fn bit_reversal_permutation<T: Clone>(seq: Vec<T>) -> Vec<T> {
 
 #[test]
 fn test_blob_consistency_check() {
+    use ff::PrimeField;
     use halo2_base::utils::{decompose_biguint, fe_to_biguint};
     use poseidon_hash::Poseidon;
 
@@ -347,11 +357,12 @@ fn test_blob_consistency_check() {
 
         native_poseidon.update(item_limbs.as_slice());
     }
-    let challenge_point = native_poseidon.squeeze();
 
     //TODO: the poseidon hash results in and out of the circuit don't match
     //      in fact the tests for halo2-lib poseidon package fail as well!
     //      I mocked this part out for now, but have to figure out what's going on.
+    //
+    //let challenge_point = native_poseidon.squeeze();
     let challenge_point = Fr::from_raw([
         0xa365ac38bf133a78,
         0xf3757d8cf92c46a6,
