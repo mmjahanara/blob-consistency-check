@@ -81,7 +81,7 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     //
     // challenge_point = poseidon(batch_commit, blob[0..BLOB_WIDTH])
     //
-    // REMARK: notice that is is important to include the blob in the
+    // REMARK: notice that it is important to include the blob in the
     // poseidon hash, otherwise we have a soundness bug.
     //
     let batch_commit = input.batch_commit;
@@ -111,7 +111,7 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     // - When ``z`` is in the domain, the evaluation can be found by indexing
     // the polynomial at the position that ``z`` is in the domain.
     // - When ``z`` is not in the domain, the barycentric formula is used:
-    //    f(z) = (z**WIDTH - 1) / WIDTH  *  sum_(i=0)^WIDTH  (f(DOMAIN[i]) * DOMAIN[i]) / (z - DOMAIN[i])
+    //    f(z) = ((z**WIDTH - 1) / WIDTH) *  sum_(i=0)^WIDTH  (f(DOMAIN[i]) * DOMAIN[i]) / (z - DOMAIN[i])
     //
     // In our case:
     // - ``z`` is the challenge point in Fp
@@ -119,11 +119,11 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
     // - ``DOMAIN`` is the bit_reversal_permutation roots of unity
     // - ``f(DOMAIN[i])`` is the blob[i]
 
-    // load challenge_point and blob to fp_chip
+    // load challenge_point to fp_chip
     let (cp_lo, cp_hi) = decompose_to_lo_hi(ctx, &range, challenge_point);
     let challenge_point_fp = cross_field_load_private(ctx, &fp_chip, &range, &cp_lo, &cp_hi);
 
-    // loading roots of unity to fp_chip
+    // loading roots of unity to fp_chip as constants
     let blob_width_th_root_of_unity =
         Fp::ROOT_OF_UNITY.pow(&[(Fp::S - BLOB_WIDTH_BITS) as u64, 0, 0, 0]);
     let roots_of_unity: Vec<_> = (0..BLOB_WIDTH)
@@ -167,18 +167,16 @@ fn blob_consistency_check<F: ScalarField, Fp: ScalarField>(
             fp_chip.sub_no_carry(ctx, one_fp.clone(), is_zero_denominator_i.clone());
         cp_is_not_root_of_unity = fp_chip.mul(ctx, cp_is_not_root_of_unity, non_zero_denominator_i);
 
-        // update `result`,
+        // update `result`
         // result = blob[i]     (challenge_point = roots_of_unity_brp[i])
         let select_blob_i = fp_chip.mul(ctx, blob[i].clone(), is_zero_denominator_i.clone());
         let tmp_result = fp_chip.add_no_carry(ctx, result, select_blob_i);
         result = fp_chip.carry_mod(ctx, tmp_result);
 
         let term_i = fp_chip.divide(ctx, numinator_i, safe_denominator_i);
-
         let evaluation_not_proper = fp_chip.add_no_carry(ctx, barycentric_evaluation, term_i);
         barycentric_evaluation = fp_chip.carry_mod(ctx, evaluation_not_proper);
     }
-    // evaluation = evaluation * (challenge_point^BLOB_WIDTH - 1) / BLOB_WIDTH
     let cp_to_the_width = fp_pow(ctx, &fp_chip, &challenge_point_fp, BLOB_WIDTH as u32);
     let cp_to_the_width_minus_one = fp_chip.sub_no_carry(ctx, cp_to_the_width, one_fp);
     let cp_to_the_width_minus_one = fp_chip.carry_mod(ctx, cp_to_the_width_minus_one);
