@@ -1,10 +1,10 @@
 # blob consistency check gadget
 
-I have implemented a proof of concept for an in-circuit *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. **This is just a research artifact, rather than production grade code, and has to be treated as such**. 
+I have implemented a proof of concept for an in-circuit *blob consistency check gadget*. It can be used by zk-rollups that intend to use blob storage as a data availability solution. **This is just a research artifact, rather than production-grade code, and has to be treated as such**. 
 
-On an M1 Macbook Pro (10 CPU cores, 16 GB RAM) proof generation takes 138.97 seconds. The circuit has 28,083,027 advice cells, and 3,393,116 lookup advice cells.
+On an M1 Macbook Pro (10 CPU cores, 16 GB RAM) proof generation takes 138.97 seconds. The circuit has 28,083,027 advice cells and 3,393,116 lookup advice cells.
 
-**remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`. Switch to branch "BLS12-381", to see the work in progress.*
+**remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`.*
 
 We provide more context in the following.
 
