@@ -1,12 +1,12 @@
 # in-circuit blob consistency check gadget
 
-I have implemented a proof of concept for the *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. This is just a research artifact, rather than production grade and audited code, and has to be treated as such. 
+I have implemented a proof of concept for the *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. **This is just a research artifact, rather than production grade code, and has to be treated as such**. 
 
 **remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`. Switch to branch "BLS12-381", to see the work in progress.*
 
 We provide more context in the following.
 
-## What changes in the Scroll's Rollup Process post EIP-4844?
+## What changes in the Rollup Process post EIP-4844?
 
 ### commit
 
@@ -25,17 +25,19 @@ The **purpose of the PI circuit is to ensure the witness matches the public comm
 
 **new design:** we use random point evaluation to check the advice column containing raw public input and the commitment to the blob are consistent. The challenge here is that we use BN254 for KZG commitment of circuits, but BLS12-381 for blobs. If we had the same curve for both commitments, we could have just checked the equality of commitments in the verifier contract. However this is not the case, so we do the following:
 
-- **off-chain - (Fiat-Shamir):** calculate ``z = poseidon(blob + C_batch)` and `y = p(z)`
+- **off-chain - (Fiat-Shamir):** calculate `z = poseidon(blob + C_batch)` and `y = p(z)`
+  
 - **in-contract - blob commitment random evaluation:** use point evaluation precompile to assert `point_evaluation_precompile(blob_versioned_hash, z, y)`.
+  
 - **in-circuit - consistency check:** 
 *public input:* `C_batch`, `z`, and `y`  
-*advice:* `blob`, `C_L1`, and `blob_versioned_hash` 
+*advice:* `blob`, `C_L1`, and `blob_versioned_hash`
+0. constrain `C_batch = Keccak(C_L1 + blob_versioned_hash)`
+1. constrain `z = poseidon(blob + C_batch)`. 
+2. constrain `y = p(z)`. circuit uses the barycentric formula which costs 4096 * 2 non-native field multiplications and divisions to evaluate the Lagrange polynomial of `blob` denoted by `p(X)` on `z` over the scalar field of BLS12-381.
 
-[(0)] constrain `C_batch = Keccak(C_L1 + blob_versioned_hash)`
-[(1)] constrain `z = poseidon(blob + C_batch)`. 
-[(2)] constrain `y = p(z)`. circuit uses the barycentric formula which costs 4096 * 2 non-native field multiplications and divisions to evaluate the Lagrange polynomial of `blob` denoted by `p(X)` on `z` over the scalar field of BLS12-381.
+*Extra gas costs: invoking the point evaluation precompile*
 
-*Extra gas costs: invoking the point evaluation precompile, 
-Extra prover cost: calculating commitment to `blob` in circuit to obtain `z`, and evaluating the Lagrange polynomial over a non-native field with 4096 * 2 operations.*
+*Extra prover cost: calculating commitment to `blob` in circuit to obtain `z`, and evaluating the Lagrange polynomial over a non-native field with 4096 * 2 operations.*
 
-**remark #3:** *This PoC currently skips item (0), and takes `C_batch`` directly as a public input.*
+**remark #3:** *This PoC currently skips item (0), and takes `C_batch` directly as a public input.*
