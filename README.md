@@ -1,6 +1,10 @@
 # in-circuit blob consistency check gadget
 
-I have implemented a proof of concept for the *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. This is just a research artifact, rather than production grade and audited code, and has to be treated as such. See the following for more context.
+I have implemented a proof of concept for the *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. This is just a research artifact, rather than production grade and audited code, and has to be treated as such. 
+
+**remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`. Switch to branch "BLS12-381", to see the work in progress.*
+
+We provide more context in the following.
 
 ## What changes in the Scroll's Rollup Process post EIP-4844?
 
@@ -10,7 +14,7 @@ I have implemented a proof of concept for the *blob consistency check gadget*. I
 
 **new design:** the commitment transaction will be a blob-carrying transaction. The same transaction batch will be the blob and instead of calculating the commitment in the contract, we just copy the versioned hash carried by the transaction to storage.
 
-**remark #1:** each transaction batch includes a certain number of L1 messages, currently `commitBatch` function takes these transactions into account when calculating the commitment to the batch. In the new design we still need to calculate the hash of these transactions, let's denote it by `C_L1` and the final commitment to the whole batch will be `C_batch = Keccak(C_L1 | blob_versioned_hash)`
+**remark #2:** each transaction batch includes a certain number of L1 messages, currently `commitBatch` function takes these transactions into account when calculating the commitment to the batch. In the new design we still need to calculate the hash of these transactions, let's denote it by `C_L1` and the final commitment to the whole batch will be `C_batch = Keccak(C_L1 | blob_versioned_hash)`
 *Savings: (1) blob vs calldata, (2) almost no more on-chain commitment (Keccak) calculation.*
 
 ### zkEVM Public Input circuit
@@ -34,5 +38,4 @@ The **purpose of the PI circuit is to ensure the witness matches the public comm
 *Extra gas costs: invoking the point evaluation precompile, 
 Extra prover cost: calculating commitment to `blob` in circuit to obtain `z`, and evaluating the Lagrange polynomial over a non-native field with 4096 * 2 operations.*
 
-**remark #2:** *This PoC currently skips item (0), and takes `C_batch`` directly as a public input.*
-**remark #3:** *Currently `halo2curves` does not have an implementation of the `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`.*
+**remark #3:** *This PoC currently skips item (0), and takes `C_batch`` directly as a public input.*
