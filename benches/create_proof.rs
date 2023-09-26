@@ -10,7 +10,7 @@ use halo2_base::{
 use halo2_base::halo2_proofs::halo2curves::bn256::{Fq, Fr, Bn256};
 use rand::rngs::OsRng;
 
-const BENCH_SAMPLES: usize = 3;
+const BENCH_SAMPLES: usize = 10;
 
 fn create_proof(c: &mut Criterion) {
     // The BlobField should be changed to BLS12-381 Scalar Field.
