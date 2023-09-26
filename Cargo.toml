@@ -1,5 +1,5 @@
 [package]
-name = "halo2-lib-playground"
+name = "blob-consistency-check"
 version = "0.1.0"
 edition = "2021"
 
@@ -24,4 +24,9 @@ serde_json = "=1.0"
 
 [dev-dependencies]
 poseidon_native = { git = "https://github.com/axiom-crypto/halo2.git", branch = "axiom/dev", package = "poseidon" }
+criterion = {version = "0.4", features = ["html_reports"]}
+
+[[bench]]
+name = "create_proof"
+harness = false
 

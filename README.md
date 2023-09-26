@@ -1,6 +1,6 @@
-# in-circuit blob consistency check gadget
+# blob consistency check gadget
 
-I have implemented a proof of concept for the *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. **This is just a research artifact, rather than production grade code, and has to be treated as such**. 
+I have implemented a proof of concept for an in-circuit *blob consistency check gadget*. It can be used by zk-rollups that intent to use blob storage as a data availability solution. **This is just a research artifact, rather than production grade code, and has to be treated as such**. 
 
 **remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`. Switch to branch "BLS12-381", to see the work in progress.*
 
