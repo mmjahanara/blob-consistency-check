@@ -4,7 +4,7 @@ I have implemented a proof of concept for an in-circuit *blob consistency check 
 
 On an M1 Macbook Pro (10 CPU cores, 16 GB RAM) proof generation takes 138.97 seconds. The circuit has 28,083,027 advice cells and 3,393,116 lookup advice cells.
 
-**remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use another non-native field, `BN254::Fq`.*
+**remark #1:** *Currently `halo2curves` does not have an implementation of `BLS12-381`, for that reason in the code we use `BN254::Fq`, another comparable non-native field, as the blob Field .*
 
 We provide more context in the following.
 
